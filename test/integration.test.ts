@@ -1,6 +1,7 @@
 /**
  * @jest-environment ceramic
  */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 
 import { CeramicApi } from '@ceramicnetwork/ceramic-common'
 import { schemasList, publishSchemas } from '@ceramicstudio/idx-schemas'
@@ -35,7 +36,7 @@ describe('integration', () => {
     const idx = new IDX({ ceramic, schemas })
 
     const [profiles, basicProfile, workProfile] = await Promise.all([
-      idx.createDefinition({ name: 'profiles map', schema: schemas.DocIdMap }),
+      idx.createDefinition({ name: 'profiles map', schema: schemas.MapCollection }),
       idx.createDefinition({ name: 'basic profile', schema: schemas.BasicProfile }),
       idx.createDefinition({ name: 'work profile', schema: schemas.BasicProfile })
     ])
@@ -55,7 +56,7 @@ describe('integration', () => {
     const aliceProfiles = bob.map('profiles', alice.id)
 
     const readMap = {}
-    for await (const [key, profile] of aliceProfiles.iterator()) {
+    for await (const [key, profile] of aliceProfiles.iterator<[string, any]>()) {
       readMap[key] = profile
     }
 
@@ -65,50 +66,63 @@ describe('integration', () => {
     })
   })
 
-  test('automatic collection', async () => {
+  test('automatic collections', async () => {
     const schemas = await publishSchemas({ ceramic, schemas: schemasList })
     const idx = new IDX({ ceramic, schemas })
 
-    const profiles = await idx.createDefinition({
-      name: 'profiles map',
-      schema: schemas.DocIdMap,
-      config: {
-        collection: { type: 'map', initialContent: {} }
-      }
-    })
+    const [profilesMap, workList] = await Promise.all([
+      idx.createDefinition({
+        name: 'profiles map',
+        schema: schemas.MapCollection,
+        config: {
+          collection: { type: 'map', initialContent: { map: {} } }
+        }
+      }),
+      idx.createDefinition({
+        name: 'work list',
+        schema: schemas.ListCollection,
+        config: {
+          collection: { type: 'list', initialContent: { list: [] } }
+        }
+      })
+    ])
     const [basicProfile, workProfile] = await Promise.all([
       idx.createDefinition({
         name: 'basic profile',
         schema: schemas.BasicProfile,
         config: {
-          collections: { [profiles]: { key: 'basic' } }
+          collections: { [profilesMap]: { key: 'basic' } }
         }
       }),
       idx.createDefinition({
         name: 'work profile',
         schema: schemas.BasicProfile,
         config: {
-          collections: { [profiles]: { key: 'work' } }
+          collections: {
+            [profilesMap]: { key: 'work' },
+            [workList]: {}
+          }
         }
       })
     ])
-    const definitions = { profiles, basicProfile, workProfile }
+    const definitions = { profiles: profilesMap, work: workList, basicProfile, workProfile }
 
     const alice = new IDX({ ceramic, definitions, schemas })
-    await alice.useCollection('profiles')
+    await alice.useCollections(['profiles', 'work'])
+
     await Promise.all([
       alice.set('basicProfile', { name: 'Alice' }),
       alice.set('workProfile', { name: 'Alice Smith' })
     ])
+    await expect(alice.list('work').at(0)).resolves.toEqual({ name: 'Alice Smith' })
 
     const bob = new IDX({ ceramic, definitions, schemas })
     const aliceProfiles = bob.map('profiles', alice.id)
 
     const readMap = {}
-    for await (const [key, profile] of aliceProfiles.iterator()) {
+    for await (const [key, profile] of aliceProfiles.iterator<[string, any]>()) {
       readMap[key] = profile
     }
-
     expect(readMap).toEqual({
       basic: { name: 'Alice' },
       work: { name: 'Alice Smith' }

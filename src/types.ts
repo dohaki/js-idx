@@ -2,14 +2,18 @@ export type DocID = string
 
 export type CollectionType = 'list' | 'map'
 
+export type ListContent = { list: Array<DocID> }
+
+export type MapContent = { map: Record<string, DocID> }
+
 export interface ListCollectionConfig {
   type: 'list'
-  initialContent: Array<DocID>
+  initialContent: ListContent
 }
 
 export interface MapCollectionConfig {
   type: 'map'
-  initialContent: Record<string, DocID>
+  initialContent: MapContent
 }
 
 export interface CollectionDefinitionConfig {

@@ -48,11 +48,12 @@ export class DoctypeProxy<T extends Doctype = Doctype> {
   }
 
   async changeContent<U>(change: (content: U) => U): Promise<void> {
-    const mutation = async (doc: T): Promise<T> => {
-      await doc.change({ content: change(doc.content) })
-      return doc
-    }
-    return await this.change(mutation)
+    return await this.change(
+      async (doc: T): Promise<T> => {
+        await doc.change({ content: change(doc.content) })
+        return doc
+      }
+    )
   }
 
   async get(): Promise<T> {

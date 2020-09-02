@@ -38,7 +38,7 @@ export abstract class Index<T = unknown> {
 export abstract class MapIndex<T extends MapIndexData> extends Index<T> {
   async getIndex(did: string): Promise<T | null> {
     const rootDoc =
-      this._idx.authenticated && did === this._idx.did.id
+      this._idx.authenticated && did === this._idx.id
         ? await this._proxy.get()
         : await this._getDoc(did)
     return (rootDoc?.content as T) ?? null
@@ -58,11 +58,7 @@ export abstract class MapIndex<T extends MapIndexData> extends Index<T> {
   }
 
   async _change(change: (content: T) => T): Promise<void> {
-    const mutation = async (doc: Doctype): Promise<Doctype> => {
-      await doc.change({ content: change(doc.content) })
-      return doc
-    }
-    return await this._proxy.change(mutation)
+    return await this._proxy.changeContent(change)
   }
 
   async _getOrCreateOwnDoc(): Promise<Doctype> {

@@ -136,6 +136,10 @@ export class IDX {
     await this.useCollectionEntry(id)
   }
 
+  async useCollections(names: Array<string>): Promise<void> {
+    await Promise.all(names.map(async name => await this.useCollection(name)))
+  }
+
   list(name: string, did: string): ListCollection
   list(name: string): WritableListCollection
   list(name: string, did?: string): ListCollection | WritableListCollection {

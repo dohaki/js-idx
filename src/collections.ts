@@ -2,7 +2,7 @@ import { Doctype } from '@ceramicnetwork/ceramic-common'
 
 import { DoctypeProxy } from './doctypes'
 import { IDX } from './index'
-import { DocID } from './types'
+import { DocID, ListContent, MapContent } from './types'
 
 export interface CollectionOptions {
   idx: IDX
@@ -26,7 +26,7 @@ export abstract class Collection<T = unknown> {
     return doc.content as U
   }
 
-  async index(): Promise<T> {
+  async content(): Promise<T> {
     const doc = await this._proxy.get()
     return doc.content as T
   }
@@ -36,14 +36,14 @@ export abstract class Collection<T = unknown> {
   abstract iterator<U>(): AsyncIterableIterator<U>
 }
 
-export class ListCollection<T extends Array<DocID> = Array<DocID>> extends Collection<T> {
+export class ListCollection extends Collection<ListContent> {
   async count(): Promise<number> {
-    const refs = await this.index()
-    return refs.length
+    const { list } = await this.content()
+    return list.length
   }
 
   iterator<U>(): AsyncIterableIterator<U> {
-    let refs: T
+    let list: Array<DocID>
     let cursor = 0
 
     return {
@@ -51,52 +51,48 @@ export class ListCollection<T extends Array<DocID> = Array<DocID>> extends Colle
         return this
       },
       next: async (): Promise<IteratorResult<U>> => {
-        if (refs == null) {
-          refs = await this.index()
+        if (list == null) {
+          list = (await this.content()).list
         }
-        if (cursor === refs.length) {
+        if (cursor === list.length) {
           return { done: true, value: null }
         }
-        return { done: false, value: (await this._getContent(refs[cursor++])) as U }
+        return { done: false, value: (await this._getContent(list[cursor++])) as U }
       }
     }
   }
 
   async at<U = unknown>(index: number): Promise<U | null> {
-    const refs = await this.index()
-    const docId = refs[index < 0 ? refs.length + index : index]
+    const { list } = await this.content()
+    const docId = list[index < 0 ? list.length + index : index]
     return await this._getContent(docId)
   }
 }
 
-export class WritableListCollection<T extends Array<DocID> = Array<DocID>> extends ListCollection<
-  T
-> {
+export class WritableListCollection extends ListCollection {
   async add(docId: DocID): Promise<void> {
-    await this._proxy.changeContent<T>(content => [...content, docId] as T)
+    await this._proxy.changeContent<ListContent>(({ list }) => ({ list: [...list, docId] }))
   }
 
   async remove(docId: DocID): Promise<void> {
-    await this._proxy.changeContent<T>(content => {
-      const index = content.indexOf(docId)
+    await this._proxy.changeContent<ListContent>(({ list }) => {
+      const index = list.indexOf(docId)
       if (index !== -1) {
-        content.splice(index, 1)
+        list.splice(index, 1)
       }
-      return content
+      return { list }
     })
   }
 }
 
-export class MapCollection<
-  T extends Record<string, DocID> = Record<string, DocID>
-> extends Collection<T> {
+export class MapCollection extends Collection<MapContent> {
   async count(): Promise<number> {
-    const refs = await this.index()
-    return Object.keys(refs).length
+    const { map } = await this.content()
+    return Object.keys(map).length
   }
 
   iterator<U>(): AsyncIterableIterator<U> {
-    let refs: T
+    let map: Record<string, DocID>
     let keys: Array<string>
     let cursor = 0
 
@@ -105,34 +101,32 @@ export class MapCollection<
         return this
       },
       next: async (): Promise<IteratorResult<U>> => {
-        if (refs == null) {
-          refs = await this.index()
-          keys = Object.keys(refs)
+        if (map == null) {
+          map = (await this.content()).map
+          keys = Object.keys(map)
         }
         if (cursor === keys.length) {
           return { done: true, value: null }
         }
         const key = keys[cursor++]
-        const content = await this._getContent(refs[key])
+        const content = await this._getContent(map[key])
         return { done: false, value: ([key, content] as unknown) as U }
       }
     }
   }
 
   async get<U = unknown>(key: string): Promise<U | null> {
-    const refs = await this.index()
-    return await this._getContent(refs[key])
+    const { map } = await this.content()
+    return await this._getContent(map[key])
   }
 }
 
-export class WritableMapCollection<
-  T extends Record<string, DocID> = Record<string, DocID>
-> extends MapCollection<T> {
+export class WritableMapCollection extends MapCollection {
   async set(key: string, docId: DocID): Promise<void> {
-    await this._proxy.changeContent<T>(content => ({ ...content, [key]: docId }))
+    await this._proxy.changeContent<MapContent>(({ map }) => ({ map: { ...map, [key]: docId } }))
   }
 
   async remove(key: string): Promise<void> {
-    await this._proxy.changeContent<T>(({ [key]: _remove, ...content }) => content as T)
+    await this._proxy.changeContent<MapContent>(({ map: { [key]: _remove, ...map } }) => ({ map }))
   }
 }
