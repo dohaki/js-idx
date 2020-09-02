@@ -213,6 +213,7 @@ describe('IDX', () => {
       const remove = jest.fn()
       const idx = new IDX({} as any)
       idx._rootIndex = { remove } as any
+      idx.getDefinition = (): any => Promise.resolve({})
 
       await expect(idx.removeEntry('defId')).resolves.toBeUndefined()
       expect(remove).toBeCalledWith('defId')
