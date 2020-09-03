@@ -53,36 +53,35 @@ describe('integration', () => {
     await Promise.all([writeMap.set('basic', basicId), writeMap.set('work', workId)])
 
     const bob = new IDX({ ceramic, definitions, schemas })
-    const aliceProfiles = bob.map('profiles', alice.id)
-
-    const readMap = {}
-    for await (const [key, profile] of aliceProfiles.iterator<[string, any]>()) {
-      readMap[key] = profile
-    }
-
-    expect(readMap).toEqual({
-      basic: { name: 'Alice' },
-      work: { name: 'Alice Smith' }
-    })
+    await expect(bob.map('profiles', alice.id).get('basic')).resolves.toEqual({ name: 'Alice' })
   })
 
   test('automatic collections', async () => {
     const schemas = await publishSchemas({ ceramic, schemas: schemasList })
     const idx = new IDX({ ceramic, schemas })
 
+    const collectionsListId = await idx.createDefinition({
+      name: 'collections collection',
+      schema: schemas.ListCollection,
+      config: {
+        collection: { type: 'list', initialContent: { list: [] } }
+      }
+    })
     const [profilesMap, workList] = await Promise.all([
       idx.createDefinition({
         name: 'profiles map',
         schema: schemas.MapCollection,
         config: {
-          collection: { type: 'map', initialContent: { map: {} } }
+          collection: { type: 'map', initialContent: { map: {} } },
+          collections: { [collectionsListId]: {} }
         }
       }),
       idx.createDefinition({
         name: 'work list',
         schema: schemas.ListCollection,
         config: {
-          collection: { type: 'list', initialContent: { list: [] } }
+          collection: { type: 'list', initialContent: { list: [] } },
+          collections: { [collectionsListId]: {} }
         }
       })
     ])
@@ -91,7 +90,9 @@ describe('integration', () => {
         name: 'basic profile',
         schema: schemas.BasicProfile,
         config: {
-          collections: { [profilesMap]: { key: 'basic' } }
+          collections: {
+            [profilesMap]: { key: 'basic' }
+          }
         }
       }),
       idx.createDefinition({
@@ -105,16 +106,27 @@ describe('integration', () => {
         }
       })
     ])
-    const definitions = { profiles: profilesMap, work: workList, basicProfile, workProfile }
+    const definitions = {
+      profiles: profilesMap,
+      work: workList,
+      basicProfile,
+      workProfile
+    }
 
     const alice = new IDX({ ceramic, definitions, schemas })
     await alice.useCollections(['profiles', 'work'])
-
     await Promise.all([
       alice.set('basicProfile', { name: 'Alice' }),
       alice.set('workProfile', { name: 'Alice Smith' })
     ])
+
+    // Work profile has been added to the collection
     await expect(alice.list('work').at(0)).resolves.toEqual({ name: 'Alice Smith' })
+
+    // const collectionsList = alice.writableCollection('list', collectionsListId)
+    // await expect(collectionsList.content()).resolves.toEqual({
+    //   list: [profilesMap, workList]
+    // })
 
     const bob = new IDX({ ceramic, definitions, schemas })
     const aliceProfiles = bob.map('profiles', alice.id)

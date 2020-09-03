@@ -71,7 +71,9 @@ export class ListCollection extends Collection<ListContent> {
 
 export class WritableListCollection extends ListCollection {
   async add(docId: DocID): Promise<void> {
-    await this._proxy.changeContent<ListContent>(({ list }) => ({ list: [...list, docId] }))
+    await this._proxy.changeContent<ListContent>(({ list }) => {
+      return { list: [...list, docId] }
+    })
   }
 
   async remove(docId: DocID): Promise<void> {
@@ -123,7 +125,9 @@ export class MapCollection extends Collection<MapContent> {
 
 export class WritableMapCollection extends MapCollection {
   async set(key: string, docId: DocID): Promise<void> {
-    await this._proxy.changeContent<MapContent>(({ map }) => ({ map: { ...map, [key]: docId } }))
+    await this._proxy.changeContent<MapContent>(({ map }) => {
+      return { map: { ...map, [key]: docId } }
+    })
   }
 
   async remove(key: string): Promise<void> {
