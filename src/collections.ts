@@ -1,21 +1,19 @@
-import { Doctype } from '@ceramicnetwork/ceramic-common'
-
 import { DoctypeProxy } from './doctypes'
 import { IDX } from './index'
 import { DocID, ListContent, MapContent } from './types'
 
 export interface CollectionOptions {
   idx: IDX
-  getDocument: () => Promise<Doctype>
+  proxy: DoctypeProxy
 }
 
 export abstract class Collection<T = unknown> {
   _idx: IDX
   _proxy: DoctypeProxy
 
-  constructor({ idx, getDocument }: CollectionOptions) {
+  constructor({ idx, proxy }: CollectionOptions) {
     this._idx = idx
-    this._proxy = new DoctypeProxy(getDocument)
+    this._proxy = proxy
   }
 
   async _getContent<U>(docId: string | null): Promise<U | null> {
@@ -71,18 +69,18 @@ export class ListCollection extends Collection<ListContent> {
 
 export class WritableListCollection extends ListCollection {
   async add(docId: DocID): Promise<void> {
-    await this._proxy.changeContent<ListContent>(({ list }) => {
-      return { list: [...list, docId] }
+    await this._proxy.changeContent<ListContent>(({ list, ...content }) => {
+      return { ...content, list: [...list, docId] }
     })
   }
 
   async remove(docId: DocID): Promise<void> {
-    await this._proxy.changeContent<ListContent>(({ list }) => {
+    await this._proxy.changeContent<ListContent>(({ list, ...content }) => {
       const index = list.indexOf(docId)
       if (index !== -1) {
         list.splice(index, 1)
       }
-      return { list }
+      return { ...content, list }
     })
   }
 }
@@ -125,12 +123,14 @@ export class MapCollection extends Collection<MapContent> {
 
 export class WritableMapCollection extends MapCollection {
   async set(key: string, docId: DocID): Promise<void> {
-    await this._proxy.changeContent<MapContent>(({ map }) => {
-      return { map: { ...map, [key]: docId } }
+    await this._proxy.changeContent<MapContent>(({ map, ...content }) => {
+      return { ...content, map: { ...map, [key]: docId } }
     })
   }
 
   async remove(key: string): Promise<void> {
-    await this._proxy.changeContent<MapContent>(({ map: { [key]: _remove, ...map } }) => ({ map }))
+    await this._proxy.changeContent<MapContent>(
+      ({ map: { [key]: _remove, ...map }, ...content }) => ({ ...content, map })
+    )
   }
 }

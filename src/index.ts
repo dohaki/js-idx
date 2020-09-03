@@ -10,6 +10,7 @@ import {
   WritableListCollection,
   WritableMapCollection
 } from './collections'
+import { DoctypeProxy } from './doctypes'
 import { RootIndex } from './indexes'
 import {
   CollectionType,
@@ -21,7 +22,7 @@ import {
   MapDefinitionConfig,
   SchemasAliases
 } from './types'
-import { createNonce } from './utils'
+import { createNonce, defer } from './utils'
 
 export * from './types'
 
@@ -39,6 +40,8 @@ export interface IDXOptions {
 
 export class IDX {
   _ceramic: CeramicApi
+  _collectionsEntries: Record<DocID, Promise<DocID>> = {}
+  _collectionProxies: Record<DocID, DoctypeProxy> = {}
   _definitions: DefinitionsAliases
   _docLoader: DataLoader<string, Doctype>
   _resolver: Resolver
@@ -142,17 +145,17 @@ export class IDX {
   }
 
   list(name: string, did: string): ListCollection
-  list(name: string): WritableListCollection
+  list(name: string, did?: string): WritableListCollection
   list(name: string, did?: string): ListCollection | WritableListCollection {
     const id = this._toDefinitionId(name)
-    return did ? this.referencedCollection('list', id, did) : this.writableCollection('list', id)
+    return this.getCollection('list', id, did)
   }
 
   map(name: string, did: string): MapCollection
-  map(name: string): WritableMapCollection
+  map(name: string, did?: string): WritableMapCollection
   map(name: string, did?: string): MapCollection | WritableMapCollection {
     const id = this._toDefinitionId(name)
-    return did ? this.referencedCollection('map', id, did) : this.writableCollection('map', id)
+    return this.getCollection('map', id, did)
   }
 
   _toDefinitionId(name: string): DocID {
@@ -235,26 +238,36 @@ export class IDX {
   }
 
   async useCollectionEntry(definitionId: DocID): Promise<void> {
-    const existing = await this.getEntryId(definitionId)
-    if (existing == null) {
-      const definition = await this.getDefinition(definitionId)
+    if (this._collectionsEntries[definitionId] == null) {
+      const deferred = defer<DocID>()
+      this._collectionsEntries[definitionId] = deferred
 
-      const collection = definition.config?.collection
-      if (collection == null) {
-        throw new Error('Invalid collection configuration')
+      try {
+        const definition = await this.getDefinition(definitionId)
+
+        const collection = definition.config?.collection
+        if (collection == null) {
+          throw new Error('Invalid collection configuration')
+        }
+
+        const collections = definition.config?.collections
+        if (collections != null) {
+          await Promise.all(
+            Object.keys(collections).map(async id => await this.useCollectionEntry(id))
+          )
+        }
+
+        const docId = await this.addEntry(definition, {
+          ...collection.initialContent,
+          _nonce: createNonce()
+        })
+        deferred.resolve(docId)
+      } catch (err) {
+        deferred.reject(err)
       }
-
-      // TODO: ensure parent collections are also attached to the index
-      // Probably needs a cache to allow parallel creation
-      // const collections = definition.config?.collections
-      // if (collections != null) {
-      //   await Promise.all(
-      //     Object.keys(collections).map(async id => await this.useCollectionEntry(id))
-      //   )
-      // }
-
-      await this.addEntry(definition, { ...collection.initialContent, _nonce: createNonce() })
     }
+
+    await this._collectionsEntries[definitionId]
   }
 
   async _createEntry(definition: Definition, content: unknown): Promise<DocID> {
@@ -271,37 +284,47 @@ export class IDX {
 
   // Collections
 
-  referencedCollection(type: 'list', definitionId: DocID, did: string): ListCollection
-  referencedCollection(type: 'map', definitionId: DocID, did: string): MapCollection
-  referencedCollection(
+  getCollection(type: 'list', definitionId: DocID, did: string): ListCollection
+  getCollection(type: 'list', definitionId: DocID, did?: string): WritableListCollection
+  getCollection(type: 'map', definitionId: DocID, did: string): MapCollection
+  getCollection(type: 'map', definitionId: DocID, did?: string): WritableMapCollection
+  getCollection(
     type: CollectionType,
     definitionId: DocID,
-    did: string
-  ): ListCollection | MapCollection {
-    const config = {
-      idx: this,
-      getDocument: async () => {
-        const docId = await this.getEntryId(definitionId, did)
-        if (docId == null) {
-          throw new Error('Collection not found')
-        }
-        return await this.loadDocument(docId)
-      }
+    did?: string
+  ): ListCollection | WritableListCollection | MapCollection | WritableMapCollection {
+    if (did == null) {
+      const config = { idx: this, proxy: this._getCollectionProxy(definitionId) }
+      return type === 'list'
+        ? new WritableListCollection(config)
+        : new WritableMapCollection(config)
     }
+
+    const getDocument = async () => {
+      const docId = await this.getEntryId(definitionId, did)
+      if (docId == null) {
+        throw new Error('Collection not found')
+      }
+      return await this.loadDocument(docId)
+    }
+    const config = { idx: this, proxy: new DoctypeProxy(getDocument) }
     return type === 'list' ? new ListCollection(config) : new MapCollection(config)
   }
 
-  writableCollection(type: 'list', definitionId: DocID): WritableListCollection
-  writableCollection(type: 'map', definitionId: DocID): WritableMapCollection
-  writableCollection(
-    type: CollectionType,
-    definitionId: DocID
-  ): WritableListCollection | WritableMapCollection {
-    const config = {
-      definitionId,
-      idx: this,
-      getDocument: async () => {
-        const docId = await this.getEntryId(definitionId, this.id)
+  async _addToCollections(
+    docId: DocID,
+    collections: Record<DocID, ListDefinitionConfig | MapDefinitionConfig>
+  ): Promise<void> {
+    const changes = Object.entries(collections).map(async ([defId, config]) => {
+      await this._addToCollection(docId, defId, config)
+    })
+    await Promise.all(changes)
+  }
+
+  _getCollectionProxy(definitionId: DocID): DoctypeProxy {
+    if (this._collectionProxies[definitionId] == null) {
+      const getDocument = async () => {
+        const docId = await this.getEntryId(definitionId)
         if (docId == null) {
           const definition = await this.getDefinition(definitionId)
           const content = definition.config?.collection?.initialContent ?? {}
@@ -313,18 +336,9 @@ export class IDX {
           return await this.loadDocument(docId)
         }
       }
+      this._collectionProxies[definitionId] = new DoctypeProxy(getDocument)
     }
-    return type === 'list' ? new WritableListCollection(config) : new WritableMapCollection(config)
-  }
-
-  async _addToCollections(
-    docId: DocID,
-    collections: Record<DocID, ListDefinitionConfig | MapDefinitionConfig>
-  ): Promise<void> {
-    const changes = Object.entries(collections).map(async ([defId, config]) => {
-      await this._addToCollection(docId, defId, config)
-    })
-    await Promise.all(changes)
+    return this._collectionProxies[definitionId]
   }
 
   async _addToCollection(
@@ -339,12 +353,9 @@ export class IDX {
     }
 
     if (collection.type === 'list') {
-      await this.writableCollection('list', definitionId).add(docId)
+      await this.getCollection('list', definitionId).add(docId)
     } else if (collection.type === 'map') {
-      await this.writableCollection('map', definitionId).set(
-        (config as MapDefinitionConfig).key,
-        docId
-      )
+      await this.getCollection('map', definitionId).set((config as MapDefinitionConfig).key, docId)
     } else {
       throw new Error('Unsupported collection')
     }
@@ -372,9 +383,9 @@ export class IDX {
     }
 
     if (collection.type === 'list') {
-      await this.writableCollection('list', definitionId).remove(docId)
+      await this.getCollection('list', definitionId).remove(docId)
     } else if (collection.type === 'map') {
-      await this.writableCollection('map', definitionId).remove((config as MapDefinitionConfig).key)
+      await this.getCollection('map', definitionId).remove((config as MapDefinitionConfig).key)
     } else {
       throw new Error('Unsupported collection')
     }

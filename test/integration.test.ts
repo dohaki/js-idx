@@ -57,14 +57,20 @@ describe('integration', () => {
   })
 
   test('automatic collections', async () => {
-    const schemas = await publishSchemas({ ceramic, schemas: schemasList })
+    const schemas = await publishSchemas({
+      ceramic,
+      schemas: schemasList
+    })
     const idx = new IDX({ ceramic, schemas })
 
     const collectionsListId = await idx.createDefinition({
       name: 'collections collection',
       schema: schemas.ListCollection,
       config: {
-        collection: { type: 'list', initialContent: { list: [] } }
+        collection: {
+          type: 'list',
+          initialContent: { list: [] }
+        }
       }
     })
     const [profilesMap, workList] = await Promise.all([
@@ -72,7 +78,10 @@ describe('integration', () => {
         name: 'profiles map',
         schema: schemas.MapCollection,
         config: {
-          collection: { type: 'map', initialContent: { map: {} } },
+          collection: {
+            type: 'map',
+            initialContent: { map: {} }
+          },
           collections: { [collectionsListId]: {} }
         }
       }),
@@ -80,7 +89,10 @@ describe('integration', () => {
         name: 'work list',
         schema: schemas.ListCollection,
         config: {
-          collection: { type: 'list', initialContent: { list: [] } },
+          collection: {
+            type: 'list',
+            initialContent: { list: [] }
+          },
           collections: { [collectionsListId]: {} }
         }
       })
@@ -112,23 +124,43 @@ describe('integration', () => {
       basicProfile,
       workProfile
     }
+    // console.log('definitions', definitions)
 
-    const alice = new IDX({ ceramic, definitions, schemas })
+    const alice = new IDX({
+      ceramic,
+      definitions,
+      schemas
+    })
     await alice.useCollections(['profiles', 'work'])
     await Promise.all([
       alice.set('basicProfile', { name: 'Alice' }),
-      alice.set('workProfile', { name: 'Alice Smith' })
+      alice.set('workProfile', {
+        name: 'Alice Smith'
+      })
     ])
 
     // Work profile has been added to the collection
     await expect(alice.list('work').at(0)).resolves.toEqual({ name: 'Alice Smith' })
 
-    // const collectionsList = alice.writableCollection('list', collectionsListId)
+    // console.log('index', await alice._rootIndex.getIndex(alice.id))
+
+    // const collectionsList = alice.getCollection('list', collectionsListId)
+
+    // TODO: why are the profilesMap and workList contents added here?
+    // Should only be references to the collections themselves
+    // console.log('collections', collectionsListId, await collectionsList.content())
+    // for await (const collection of collectionsList.iterator()) {
+    //   console.log('collection', collection)
+    // }
     // await expect(collectionsList.content()).resolves.toEqual({
     //   list: [profilesMap, workList]
     // })
 
-    const bob = new IDX({ ceramic, definitions, schemas })
+    const bob = new IDX({
+      ceramic,
+      definitions,
+      schemas
+    })
     const aliceProfiles = bob.map('profiles', alice.id)
 
     const readMap = {}
